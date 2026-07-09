@@ -12,6 +12,22 @@ A basic Flutter starter app — a simple counter screen with light/dark theme su
    flutter run
    ```
 
+## Running on Windows
+
+Windows desktop support has been scaffolded (`windows/` folder — CMake build files and a Win32 runner). To run it:
+
+```
+flutter config --enable-windows-desktop
+flutter pub get
+flutter run -d windows
+```
+
+**Note:** Flutter regenerates a few files under `windows/flutter/` (an `ephemeral/` folder and `generated_plugins.cmake`) automatically on `flutter pub get` — these are version-matched to your installed Flutter SDK, so don't hand-edit them. If the build ever complains about missing CMake config in that folder, running:
+```
+flutter create --platforms=windows .
+```
+from the project root will safely regenerate/repair just the Windows platform files without touching `lib/` or your other code.
+
 ## Project Structure
 
 - `lib/main.dart` — app entry point and the single counter screen
