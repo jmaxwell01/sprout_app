@@ -11,6 +11,7 @@ namespace {
 ///
 /// Redefined in case the developer's machine has a Windows SDK older than
 /// version 10.0.22000.0.
+/// See: https://docs.microsoft.com/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -18,14 +19,23 @@ namespace {
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
+///
+/// A value of 0 indicates apps should use dark mode. A non-zero or missing
+/// value indicates apps should use light mode.
 constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+  L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
+
+// Scale helper to convert logical scaler values to physical using passed in
+// scale factor
+int Scale(int source, double scale_factor) {
+  return static_cast<int>(source * scale_factor);
+}
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
 // This API is only needed for PerMonitor V1 awareness mode.
@@ -63,7 +73,7 @@ class WindowClassRegistrar {
   const wchar_t* GetWindowClass();
 
   // Unregisters the window class. Should only be called if there are no
-  // instances of the window left.
+  // instances of the window.
   void UnregisterWindowClass();
 
  private:
@@ -110,26 +120,24 @@ Win32Window::~Win32Window() {
   Destroy();
 }
 
-bool Win32Window::Create(const std::wstring& title, const Point& origin,
-                          const Size& size) {
+bool Win32Window::Create(const std::wstring& title,
+                         const Point& origin,
+                         const Size& size) {
   Destroy();
 
   const wchar_t* window_class =
       WindowClassRegistrar::GetInstance()->GetWindowClass();
 
   const POINT target_point = {static_cast<LONG>(origin.x),
-                               static_cast<LONG>(origin.y)};
+                              static_cast<LONG>(origin.y)};
   HMONITOR monitor = MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
-  auto scale = [scale_factor](unsigned int value) -> int {
-    return static_cast<int>(value * scale_factor);
-  };
 
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      scale(origin.x), scale(origin.y),
-      scale(size.width), scale(size.height),
+      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
+      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
@@ -146,9 +154,10 @@ bool Win32Window::Show() {
 }
 
 // static
-LRESULT CALLBACK Win32Window::WndProc(HWND const window, UINT const message,
-                                       WPARAM const wparam,
-                                       LPARAM const lparam) noexcept {
+LRESULT CALLBACK Win32Window::WndProc(HWND const window,
+                                      UINT const message,
+                                      WPARAM const wparam,
+                                      LPARAM const lparam) noexcept {
   if (message == WM_NCCREATE) {
     auto window_struct = reinterpret_cast<CREATESTRUCT*>(lparam);
     SetWindowLongPtr(window, GWLP_USERDATA,
@@ -165,9 +174,10 @@ LRESULT CALLBACK Win32Window::WndProc(HWND const window, UINT const message,
 }
 
 LRESULT
-Win32Window::MessageHandler(HWND hwnd, UINT const message,
-                             WPARAM const wparam,
-                             LPARAM const lparam) noexcept {
+Win32Window::MessageHandler(HWND hwnd,
+                            UINT const message,
+                            WPARAM const wparam,
+                            LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
       window_handle_ = nullptr;
@@ -182,8 +192,8 @@ Win32Window::MessageHandler(HWND hwnd, UINT const message,
       LONG newWidth = newRectSize->right - newRectSize->left;
       LONG newHeight = newRectSize->bottom - newRectSize->top;
 
-      SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top,
-                   newWidth, newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+      SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
+                   newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
       return 0;
     }
@@ -191,8 +201,8 @@ Win32Window::MessageHandler(HWND hwnd, UINT const message,
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
-        MoveWindow(child_content_, rect.left, rect.top,
-                   rect.right - rect.left, rect.bottom - rect.top, TRUE);
+        MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
+                   rect.bottom - rect.top, TRUE);
       }
       return 0;
     }
@@ -266,9 +276,9 @@ void Win32Window::UpdateTheme(HWND const window) {
   DWORD light_mode;
   DWORD light_mode_size = sizeof(light_mode);
   LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,
-                                kGetPreferredBrightnessRegValue,
-                                RRF_RT_REG_DWORD, nullptr, &light_mode,
-                                &light_mode_size);
+                               kGetPreferredBrightnessRegValue,
+                               RRF_RT_REG_DWORD, nullptr, &light_mode,
+                               &light_mode_size);
 
   if (result == ERROR_SUCCESS) {
     BOOL enable_dark_mode = light_mode == 0;
